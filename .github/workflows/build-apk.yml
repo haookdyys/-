@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout
@@ -16,28 +16,61 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "11"
+          java-version: '11'
 
-      - name: Extract source
+      - name: Setup Gradle 7.0.2
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '7.0.2'
+
+      - name: Find source ZIP
         shell: bash
         run: |
           set -e
+
           ZIP_FILE=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: 没有找到源码 ZIP"
+            exit 1
+          fi
+
+          echo "找到源码：$ZIP_FILE"
+
           mkdir -p source
           unzip -q "$ZIP_FILE" -d source
-          GRADLEW=$(find source -type f -name "gradlew" | head -n 1)
-          PROJECT_DIR=$(dirname "$GRADLEW")
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "项目目录：$PROJECT_DIR"
 
-      - name: Create debug keystore
+          GRADLEW=$(find source -type f -name "gradlew" | head -n 1)
+
+          if [ -z "$GRADLEW" ]; then
+            echo "ERROR: 源码 ZIP 中没有找到 gradlew"
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$GRADLEW")
+
+          echo "Android 项目目录：$PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Fix old build configuration
         shell: bash
         run: |
           set -e
-          cd "$PROJECT_DIR/app"
+
+          cd "$PROJECT_DIR"
+
+          # 这个老插件在项目中没有实际使用，移除它避免构建时下载失败
+          sed -i "/com\.chenenyu:img-optimizer/d" build.gradle
+
+          # 增加 Maven Central
+          sed -i "/repositories {/a\        mavenCentral()" build.gradle
+
+          # 创建 debug 签名文件
+          mkdir -p app
+
           keytool -genkeypair \
             -v \
-            -keystore debug.keystore \
+            -keystore app/debug.keystore \
             -storepass android \
             -alias androiddebugkey \
             -keypass android \
@@ -46,26 +79,39 @@ jobs:
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-      - name: Build APK
+      - name: Build Debug APK
         shell: bash
         run: |
           set -e
+
           cd "$PROJECT_DIR"
+
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+          ./gradlew :app:assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --info
 
       - name: Find APK
         shell: bash
         run: |
           set -e
+
           mkdir -p output
-          APK=$(find "$PROJECT_DIR/app/build/outputs/apk" -type f -name "*.apk" | head -n 1)
+
+          APK=$(find "$PROJECT_DIR/app/build/outputs/apk" \
+            -type f \
+            -name "*.apk" | head -n 1)
+
           if [ -z "$APK" ]; then
-            echo "没有找到 APK"
+            echo "ERROR: 编译完成但没有找到 APK"
             exit 1
           fi
+
+          echo "找到 APK：$APK"
+
           cp "$APK" output/SmsForwarder-V56.1.apk
-          echo "APK：$APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
