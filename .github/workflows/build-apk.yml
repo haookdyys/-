@@ -3,9 +3,6 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    paths:
-      - "*.zip"
-      - ".github/workflows/build-apk.yml"
 
 jobs:
   build:
@@ -21,67 +18,57 @@ jobs:
           distribution: temurin
           java-version: "11"
 
-      - name: Find and extract source ZIP
+      - name: Extract source
         shell: bash
         run: |
           set -e
-
           ZIP_FILE=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "没有找到源码 ZIP"
-            exit 1
-          fi
-
-          echo "找到源码：$ZIP_FILE"
-
           mkdir -p source
           unzip -q "$ZIP_FILE" -d source
-
           GRADLEW=$(find source -type f -name "gradlew" | head -n 1)
-
-          if [ -z "$GRADLEW" ]; then
-            echo "没有找到 gradlew"
-            echo "请检查源码 ZIP 是否正确"
-            exit 1
-          fi
-
           PROJECT_DIR=$(dirname "$GRADLEW")
-
-          echo "Android 项目目录：$PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "项目目录：$PROJECT_DIR"
+
+      - name: Create debug keystore
+        shell: bash
+        run: |
+          set -e
+          cd "$PROJECT_DIR/app"
+          keytool -genkeypair \
+            -v \
+            -keystore debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Build APK
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
-
           chmod +x gradlew
-
           ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Prepare APK
+      - name: Find APK
         shell: bash
         run: |
           set -e
-
           mkdir -p output
-
           APK=$(find "$PROJECT_DIR/app/build/outputs/apk" -type f -name "*.apk" | head -n 1)
-
           if [ -z "$APK" ]; then
             echo "没有找到 APK"
             exit 1
           fi
-
-          echo "找到 APK：$APK"
-
-          cp "$APK" output/SmsForwarder-V56.1-debug.apk
+          cp "$APK" output/SmsForwarder-V56.1.apk
+          echo "APK：$APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SmsForwarder-V56.1-APK
-          path: output/SmsForwarder-V56.1-debug.apk
+          path: output/SmsForwarder-V56.1.apk
